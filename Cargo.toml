@@ -1,0 +1,8 @@
+[package]
+name = "iobench"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5.26", features = ["derive"] }
+walkdir = "2.5.0"

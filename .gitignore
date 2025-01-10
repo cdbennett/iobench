@@ -1,0 +1,9 @@
+# Output directory for specific artifacts, such as the app binaries we'll
+# copy into the final app Docker image.
+/output/
+
+# Rust output directory. Will typically be huge, so don't want to copy into Docker unnecessarily.
+/target/
+
+# File created by cargo-zigbuild
+.intentionally-empty-file.o
