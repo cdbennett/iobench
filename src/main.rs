@@ -1,6 +1,13 @@
 use std::{path::PathBuf, time::Instant};
 
 use clap::{Parser, Subcommand};
+use jwalk::{
+    rayon::{
+        self,
+        iter::{IntoParallelRefIterator, ParallelIterator},
+    },
+    DirEntry, WalkDir,
+};
 
 #[derive(Parser, Debug, Clone)]
 #[command(version, about, long_about = None)]
@@ -36,17 +43,17 @@ fn main() {
 fn read_tree(dir: PathBuf, threads: u32) {
     println!("-- reading {dir:?} using {threads} threads");
     let t1 = Instant::now();
-    let all_files: Vec<_> = walkdir::WalkDir::new(dir)
-        .sort_by_file_name()
+    let all_files: Vec<_> = WalkDir::new(dir)
+        .parallelism(jwalk::Parallelism::RayonNewPool(threads as usize))
+        .skip_hidden(false)
+        .sort(true)
+        // .process_read_dir(|depth, path, read_dir_state, children| {
+        //     children.retain(|dir_entry_result| {
+        //         dir_entry_result.as_ref().map(|dir_entry| dir_entry.file_type.is_file()).unwrap_or(false)
+        //     })
+        // })
         .into_iter()
-        .filter_map(|entry| {
-            let entry = entry.unwrap();
-            if !entry.file_type().is_dir() {
-                Some(entry)
-            } else {
-                None
-            }
-        })
+        .filter_map(|result| result.ok().filter(|entry| entry.file_type.is_file()))
         .collect();
     let t2 = Instant::now();
     let dur_s = (t2 - t1).as_secs_f64();
@@ -57,23 +64,20 @@ fn read_tree(dir: PathBuf, threads: u32) {
         dur_s,
     );
 
-    let chunk_size = all_files.len() / threads as usize;
-    let chunks: Vec<_> = all_files.chunks(chunk_size).collect();
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(threads as usize)
+        .build()
+        .expect("thread pool");
 
     let t1 = Instant::now();
-    let mut all_stats = ReadFilesStats::default();
-    std::thread::scope(|scope| {
-        let results: Vec<_> = chunks
-            .iter()
-            .map(|chunk| scope.spawn(|| read_files(chunk)))
-            .collect();
 
-        for h in results {
-            let r = h.join();
-            let stats = r.expect("return value from thread");
-            all_stats.update(&stats);
-        }
+    let all_stats = pool.install(|| {
+        all_files
+            .par_iter()
+            .map(read_file)
+            .reduce(ReadFilesStats::default, |a, b| a.combine(&b))
     });
+
     let t2 = Instant::now();
     let dur_s = (t2 - t1).as_secs_f64();
     let total_size_mb = all_stats.bytes as f64 / 1_000_000.0;
@@ -93,24 +97,24 @@ struct ReadFilesStats {
 }
 
 impl ReadFilesStats {
-    fn update(&mut self, other: &ReadFilesStats) {
-        self.bytes += other.bytes;
-        self.file_count += other.file_count;
+    fn combine(&self, other: &Self) -> Self {
+        Self {
+            bytes: self.bytes + other.bytes,
+            file_count: self.file_count + other.file_count,
+        }
     }
 }
 
-fn read_files(chunk: &[walkdir::DirEntry]) -> ReadFilesStats {
+fn read_file(entry: &DirEntry<((), ())>) -> ReadFilesStats {
     let mut stats = ReadFilesStats::default();
-    for file in chunk {
-        let path = file.path();
-        match std::fs::read(path) {
-            Ok(content) => {
-                stats.bytes += content.len() as u64;
-                stats.file_count += 1;
-            }
-            Err(err) => {
-                eprintln!("note: failed to read file {path:?}: {err}");
-            }
+    let path = &entry.path();
+    match std::fs::read(path) {
+        Ok(content) => {
+            stats.bytes += content.len() as u64;
+            stats.file_count += 1;
+        }
+        Err(err) => {
+            eprintln!("note: failed to read file {path:?}: {err}");
         }
     }
 
