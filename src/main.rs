@@ -54,7 +54,7 @@ fn main() {
             }
             let mut paths = paths
                 .into_iter()
-                .map(|s| PathBuf::from(s))
+                .map(PathBuf::from)
                 .collect::<Vec<PathBuf>>();
             if paths.is_empty() {
                 paths.push(std::env::current_dir().unwrap());
@@ -73,11 +73,6 @@ fn read_tree(dirs: Vec<PathBuf>, threads: u32) {
             .parallelism(jwalk::Parallelism::RayonNewPool(threads as usize))
             .skip_hidden(false)
             .sort(true)
-            // .process_read_dir(|depth, path, read_dir_state, children| {
-            //     children.retain(|dir_entry_result| {
-            //         dir_entry_result.as_ref().map(|dir_entry| dir_entry.file_type.is_file()).unwrap_or(false)
-            //     })
-            // })
             .into_iter()
             .filter_map(|result| result.ok().filter(|entry| entry.file_type.is_file()))
             .collect::<Vec<_>>();
@@ -137,7 +132,7 @@ fn read_file(entry: &DirEntry<((), ())>) -> ReadFilesStats {
     let mut stats = ReadFilesStats::default();
     let path = entry.path();
 
-    match do_read_file(&entry, &mut stats) {
+    match do_read_file(entry, &mut stats) {
         Ok(()) => {
             trace!("done reading file {}", path.to_string_lossy());
         }
