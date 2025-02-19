@@ -32,6 +32,9 @@ enum CliCommand {
         /// Number of concurrent threads to use.
         #[arg(short = 'j', long, default_value_t = 16)]
         threads: u32,
+
+        /// Filesystem paths to read (alternative to -d/--dir DIR)
+        paths: Vec<String>,
     },
 }
 
@@ -40,29 +43,46 @@ fn main() {
     let options = Cli::parse();
 
     match options.command {
-        CliCommand::ReadTree { dir, threads } => read_tree(
-            dir.map(|s| PathBuf::from(&s))
-                .unwrap_or_else(|| std::env::current_dir().unwrap()),
+        CliCommand::ReadTree {
+            dir,
+            paths,
             threads,
-        ),
+        } => {
+            let mut paths = paths.clone();
+            if let Some(d) = dir {
+                paths.push(d);
+            }
+            let mut paths = paths
+                .into_iter()
+                .map(|s| PathBuf::from(s))
+                .collect::<Vec<PathBuf>>();
+            if paths.is_empty() {
+                paths.push(std::env::current_dir().unwrap());
+            }
+            read_tree(paths, threads);
+        }
     }
 }
 
-fn read_tree(dir: PathBuf, threads: u32) {
-    println!("-- reading {dir:?} using {threads} threads");
+fn read_tree(dirs: Vec<PathBuf>, threads: u32) {
+    println!("-- reading {dirs:?} using {threads} threads");
     let t1 = Instant::now();
-    let all_files: Vec<_> = WalkDir::new(dir)
-        .parallelism(jwalk::Parallelism::RayonNewPool(threads as usize))
-        .skip_hidden(false)
-        .sort(true)
-        // .process_read_dir(|depth, path, read_dir_state, children| {
-        //     children.retain(|dir_entry_result| {
-        //         dir_entry_result.as_ref().map(|dir_entry| dir_entry.file_type.is_file()).unwrap_or(false)
-        //     })
-        // })
-        .into_iter()
-        .filter_map(|result| result.ok().filter(|entry| entry.file_type.is_file()))
-        .collect();
+    let mut all_files = Vec::new();
+    for dir in dirs {
+        let files = WalkDir::new(dir)
+            .parallelism(jwalk::Parallelism::RayonNewPool(threads as usize))
+            .skip_hidden(false)
+            .sort(true)
+            // .process_read_dir(|depth, path, read_dir_state, children| {
+            //     children.retain(|dir_entry_result| {
+            //         dir_entry_result.as_ref().map(|dir_entry| dir_entry.file_type.is_file()).unwrap_or(false)
+            //     })
+            // })
+            .into_iter()
+            .filter_map(|result| result.ok().filter(|entry| entry.file_type.is_file()))
+            .collect::<Vec<_>>();
+        all_files.extend(files);
+    }
     let t2 = Instant::now();
     let dur_s = (t2 - t1).as_secs_f64();
     println!(
